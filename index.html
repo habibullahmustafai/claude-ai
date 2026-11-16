@@ -1192,34 +1192,38 @@
                 if (!window.puter?.ai?.listModels) throw new Error('Puter AI catalogue is unavailable.');
                 const catalog = await puter.ai.listModels();
                 const all = Array.isArray(catalog) ? catalog : [];
-                // Only explicit :free variants are allowed. Prefer Claude, then offer other free models.
-                const free = all.filter(m => String(m.id || '').toLowerCase().endsWith(':free'));
-                const isClaudeModel = m => /claude|anthropic/i.test([m.id, m.name, m.provider].join(' '));
-                const chosen = free.slice().sort((a, b) => Number(isClaudeModel(b)) - Number(isClaudeModel(a)));
-                const claudeCount = chosen.filter(isClaudeModel).length;
-                availableModels = chosen.slice(0, 60).map(m => ({
-                    apiName: m.id,
-                    displayName: (m.name || m.id) + (isClaudeModel(m) ? ' · Claude · FREE' : ' · FREE'),
-                    shortName: (m.name || m.id).replace(/\s+/g, ' ').slice(0, 20) + ' · FREE',
-                    provider: m.provider || '',
-                    context: Number(m.context || 0),
-                    maxTokens: Number(m.max_tokens || 0),
-                    isClaude: isClaudeModel(m)
-                }));
+                // Expose only model variants explicitly marked FREE.
+                const free = all.filter(m => [m.id, m.puterId, ...(Array.isArray(m.aliases) ? m.aliases : [])]
+                    .filter(Boolean).some(v => /:free(?:$|[^a-z0-9])/i.test(String(v))));
+                const isClaudeModel = m => /claude|anthropic/i.test([m.id, m.puterId, m.name, m.provider].join(' '));
+                const isOpenAIModel = m => /openai/i.test([m.id, m.puterId, m.name, m.provider].join(' '));
+                const chosen = free.slice().sort((a, b) => {
+                    const score = m => isClaudeModel(m) ? 2 : isOpenAIModel(m) ? 1 : 0;
+                    return score(b) - score(a) || String(a.name || a.id).localeCompare(String(b.name || b.id));
+                });
+                availableModels = chosen.slice(0, 150).map(m => {
+                    const openAI = isOpenAIModel(m), claude = isClaudeModel(m);
+                    return {
+                        apiName: m.id,
+                        displayName: (m.name || m.id) + (claude ? ' · Claude · FREE' : openAI ? ' · OpenAI · FREE · Search candidate' : ' · FREE'),
+                        shortName: (m.name || m.id).replace(/\s+/g, ' ').slice(0, 20) + ' · FREE',
+                        provider: m.provider || '', context: Number(m.context || 0),
+                        maxTokens: Number(m.max_tokens || 0), isClaude: claude,
+                        supportsWebSearch: openAI
+                    };
+                });
                 if (!availableModels.length) {
                     currentModel = null;
-                    notice.textContent = 'Puter currently lists no model explicitly marked FREE. No paid model will be used. Please reload later.';
-                    updateModelDisplay();
-                    return;
+                    notice.textContent = 'Puter اس وقت کوئی واضح FREE ماڈل نہیں دکھا رہا۔ کوئی paid ماڈل خودکار طور پر منتخب نہیں ہوگا۔';
+                    updateModelDisplay(); return;
                 }
-                currentModel = availableModels[0].apiName;
+                if (!availableModels.some(m => m.apiName === currentModel)) currentModel = availableModels[0].apiName;
                 updateModelDisplay();
-                notice.textContent = claudeCount
-                    ? `Claude is the first choice (${claudeCount} free Claude model(s) found). Other explicitly FREE models are available as backup choices. Deep modes can use a second free model for independent review. No paid model will be selected.`
-                    : 'No free Claude model is currently listed. The app has selected the best available explicitly FREE alternative. Deep modes can use a second free model for independent review. No paid model will be selected.';
+                const searchCount = availableModels.filter(m => m.supportsWebSearch).length;
+                notice.textContent = `کل ${availableModels.length} مفت ماڈل دستیاب ہیں۔ آپ خود ماڈل منتخب کریں۔ ویب سرچ کے ممکنہ امیدوار ${searchCount} OpenAI مفت ماڈل(ز) ہیں؛ اصل سپورٹ Puter کے موجودہ ماڈل/اکاؤنٹ پر منحصر ہے۔ Paid ماڈل خودکار طور پر استعمال نہیں ہوگا۔`;
             } catch (error) {
                 currentModel = null;
-                notice.textContent = 'Could not load free models: ' + (error?.message || 'Please reload when online.');
+                notice.textContent = 'مفت ماڈلز لوڈ نہیں ہو سکے: ' + (error?.message || 'انٹرنیٹ چیک کرکے دوبارہ لوڈ کریں۔');
                 updateModelDisplay();
             }
         }
@@ -1341,14 +1345,16 @@
         }
 
         function toggleModel() {
-            if (!availableModels.length) { alert('No explicitly FREE model is currently available. No paid model will be selected.'); return; }
+            if (!availableModels.length) { alert('اس وقت کوئی واضح FREE ماڈل دستیاب نہیں۔'); return; }
             const options = availableModels.map((m, i) => `${i + 1}. ${m.isClaude ? '⭐ ' : ''}${m.displayName}`).join('\n');
-            const answer = prompt('Choose a FREE model by number:\n\n' + options, '1');
+            const currentIndex = Math.max(0, availableModels.findIndex(m => m.apiName === currentModel));
+            const answer = prompt('اپنا FREE ماڈل نمبر منتخب کریں:\n\n' + options + '\n\nنوٹ: Web Search صرف OpenAI نشان والے ماڈلز کے ساتھ دستیاب ہے۔', String(currentIndex + 1));
             if (answer === null) return;
             const index = Number.parseInt(answer, 10) - 1;
-            if (!Number.isInteger(index) || index < 0 || index >= availableModels.length) { alert('Invalid model number.'); return; }
+            if (!Number.isInteger(index) || index < 0 || index >= availableModels.length) { alert('غلط ماڈل نمبر منتخب کیا گیا۔'); return; }
             currentModel = availableModels[index].apiName;
             updateModelDisplay();
+            if (researchMode && !availableModels[index].supportsWebSearch) alert('یہ ماڈل عام چیٹ کے لیے منتخب ہو گیا ہے، مگر Web Search کے لیے OpenAI · FREE ماڈل منتخب کریں۔');
         }
 
         function submitProjectBrief() {
@@ -1797,6 +1803,8 @@ RESPONSE STYLE:
             const uploadedEvidence = pendingDocumentContext
                 ? `\\n\\nمنسلک فائلوں کا متن (اقتباس کی اصل حد ملحوظ رکھیں):\\n${pendingDocumentContext.slice(0, 30000)}`
                 : '';
+            if (shouldSearch) { chatHistory[chatHistory.length - 1].content += '\n\nLIVE WEB RESEARCH REQUIRED: use the attached web_search tool before answering, verify key claims with authoritative sources, and include clickable citations. If search fails, say so and do not fabricate sources.'; }
+
             const requestMessages = [
                 { role: 'system', content: ACADEMIC_CODING_INSTRUCTIONS + getPhase4ResearchInstructions() + (bookEvidence || uploadedEvidence
                     ? '\\n\\nSOURCE-GROUNDED BOOK RESEARCH: Use the supplied excerpts as primary evidence. Cite exact source filename and printed/extracted page labels shown in brackets. Never fabricate a page, quote, edition, or missing content. Separate source evidence from general knowledge. End with a brief note on how many supplied files were represented when determinable.'
@@ -1810,14 +1818,12 @@ RESPONSE STYLE:
                 isStreaming = true;
                 if (typeof puter === 'undefined') { throw new Error('Puter.js is not available.'); }
                 if (!(await refreshAuthStatus())) throw new Error('Please sign in to your Puter account first.');
-                let selected = availableModels.find(m => m.apiName === currentModel);
-                if (shouldSearch) {
-                    // Puter's web_search tool is currently supported for OpenAI chat models.
-                    selected = availableModels.find(m => /openai/i.test([m.apiName, m.provider, m.displayName].join(' ')));
-                    if (!selected) throw new Error('گہری ویب تحقیق کے لیے فی الحال کوئی واضح طور پر FREE OpenAI ماڈل دستیاب نہیں۔ پیڈ ماڈل استعمال نہیں کیا گیا؛ بعد میں دوبارہ کوشش کریں یا Deep Research کے بجائے Deep Thinking منتخب کریں۔');
+                const selected = availableModels.find(m => m.apiName === currentModel);
+                if (!selected) throw new Error('آپ کا منتخب کردہ ماڈل دستیاب نہیں۔ ماڈل فہرست دوبارہ لوڈ کریں۔');
+                if (shouldSearch && !selected.supportsWebSearch) {
+                    throw new Error(`آپ نے ${selected.displayName} منتخب کیا ہے۔ یہ عام چیٹ کے لیے دستیاب ہے، مگر Puter Web Search کے لیے OpenAI ماڈل منتخب کرنا ضروری ہے۔ ماڈل مینو سے OpenAI · FREE ماڈل منتخب کریں۔ آپ کا انتخاب خودکار طور پر تبدیل نہیں کیا گیا۔`);
                 }
-                if (!selected || !String(selected.apiName).toLowerCase().endsWith(':free')) throw new Error('Safety check stopped a model that is not explicitly marked FREE.');
-                currentModel = selected.apiName;
+                if (!/:free(?:$|[^a-z0-9])/i.test(String(selected.apiName))) throw new Error('حفاظتی جانچ نے ایسے ماڈل کو روک دیا جو واضح طور پر FREE نہیں ہے۔');
                 updateModelDisplay();
                 recordUsageAttempt();
                 usageAttemptRecorded = true;
