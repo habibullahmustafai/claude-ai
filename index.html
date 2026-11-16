@@ -706,7 +706,7 @@
                     
                     <div style="max-width: 600px; margin-bottom: 15px; padding: 12px; background-color: #2a2a2a; border-radius: 8px; border: 1px solid #404040;">
                         <div style="font-size: 13px; color: #b3b3b3; text-align: center; margin-bottom: 10px;">
-                            💡 <strong>Private-use setup:</strong> Sign in with your Puter account. Only models marked FREE are selectable in this app.
+                            💡 <strong>Private-use setup:</strong> Sign in with your Puter account. Claude is preferred. If no free Claude model is listed, another explicitly FREE model may be used. Paid models are blocked.
                         </div>
                         <div style="font-size: 12px; color: #808080; text-align: center; margin-bottom: 10px;" id="protocolNotice">
                             <!-- This will be populated by JS -->
@@ -721,7 +721,7 @@
                     
                     <div class="model-selector">
                         <button class="model-btn" id="modelSelector">
-                            <span id="currentModel">Claude Sonnet 4</span>
+                            <span id="currentModel">Finding free AI model…</span>
                             <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
                                 <path d="M7.41 8.59L12 13.17l4.59-4.58L18 10l-6 6-6-6 1.41-1.41z"/>
                             </svg>
@@ -784,7 +784,7 @@
                         <textarea class="search-input" id="chatInput" placeholder="Message…" rows="1"></textarea>
                         <div class="search-actions">
                             <button class="model-btn" id="chatModelSelector" style="padding: 6px 8px; font-size: 12px;">
-                                <span id="chatCurrentModel">Sonnet 4</span>
+                                <span id="chatCurrentModel">Loading…</span>
                             </button>
                             <button class="send-btn" id="chatSendBtn">
                                 <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
@@ -865,28 +865,29 @@
                 if (!window.puter?.ai?.listModels) throw new Error('Puter AI catalogue is unavailable.');
                 const catalog = await puter.ai.listModels();
                 const all = Array.isArray(catalog) ? catalog : [];
-                // Only explicit :free variants are allowed. Never silently use a paid base model.
+                // Only explicit :free variants are allowed. Prefer Claude, then offer other free models.
                 const free = all.filter(m => String(m.id || '').toLowerCase().endsWith(':free'));
-                const claude = free.filter(m => /claude|anthropic/i.test([m.id, m.name, m.provider].join(' ')));
-                const chosen = claude;
-                availableModels = chosen.slice(0, 40).map(m => ({
+                const isClaudeModel = m => /claude|anthropic/i.test([m.id, m.name, m.provider].join(' '));
+                const chosen = free.slice().sort((a, b) => Number(isClaudeModel(b)) - Number(isClaudeModel(a)));
+                const claudeCount = chosen.filter(isClaudeModel).length;
+                availableModels = chosen.slice(0, 60).map(m => ({
                     apiName: m.id,
-                    displayName: (m.name || m.id) + ' · FREE',
-                    shortName: (m.name || m.id).replace(/\s+/g, ' ').slice(0, 24) + ' · FREE',
+                    displayName: (m.name || m.id) + (isClaudeModel(m) ? ' · Claude · FREE' : ' · FREE'),
+                    shortName: (m.name || m.id).replace(/\s+/g, ' ').slice(0, 20) + ' · FREE',
                     provider: m.provider || '',
-                    isClaude: /claude|anthropic/i.test([m.id, m.name, m.provider].join(' '))
+                    isClaude: isClaudeModel(m)
                 }));
                 if (!availableModels.length) {
                     currentModel = null;
-                    notice.textContent = 'No model with an explicit :free variant is currently listed. No paid model will be used. Check again later or review Puter model availability.';
+                    notice.textContent = 'Puter currently lists no model explicitly marked FREE. No paid model will be used. Please reload later.';
                     updateModelDisplay();
                     return;
                 }
                 currentModel = availableModels[0].apiName;
                 updateModelDisplay();
-                notice.textContent = claude.length
-                    ? 'Showing only Claude models explicitly marked FREE. Free quotas and availability are controlled by Puter/provider.'
-                    : 'No Claude model with an explicit FREE variant is currently listed. This app will not substitute another AI or use a paid Claude model.';
+                notice.textContent = claudeCount
+                    ? `Claude is the first choice (${claudeCount} free Claude model(s) found). Other explicitly FREE models are available as backup choices. No paid model will be selected.`
+                    : 'No free Claude model is currently listed. The app has selected the best available explicitly FREE alternative. Claude will be preferred automatically when a free Claude model returns.';
             } catch (error) {
                 currentModel = null;
                 notice.textContent = 'Could not load free models: ' + (error?.message || 'Please reload when online.');
@@ -966,8 +967,8 @@
         }
 
         function toggleModel() {
-            if (!availableModels.length) { alert('No explicitly free model is currently available. No paid model will be selected.'); return; }
-            const options = availableModels.map((m, i) => `${i + 1}. ${m.displayName}`).join('\n');
+            if (!availableModels.length) { alert('No explicitly FREE model is currently available. No paid model will be selected.'); return; }
+            const options = availableModels.map((m, i) => `${i + 1}. ${m.isClaude ? '⭐ ' : ''}${m.displayName}`).join('\n');
             const answer = prompt('Choose a FREE model by number:\n\n' + options, '1');
             if (answer === null) return;
             const index = Number.parseInt(answer, 10) - 1;
@@ -1086,7 +1087,7 @@
 
         async function sendMessage(message) {
             if (isStreaming) return;
-            if (!currentModel) { alert('No free model is currently available in Puter. Reload the model list later.'); return; }
+            if (!currentModel) { alert('No explicitly FREE model is currently available in Puter. Reload the model list later.'); return; }
             
             console.log('🚀 Starting to send message...');
             addMessage(message, 'user');
@@ -1131,7 +1132,7 @@
             } catch (error) {
                 console.error('❌ Error in sendMessage:', error);
                 hideTypingIndicator();
-                addMessage('Request failed: ' + (error.message || 'Unknown error.') + '\n\nIf this is a quota or rate-limit issue, check your Puter usage/billing page. This app will not switch to a paid model automatically.', 'assistant', true);
+                addMessage('Request failed: ' + (error.message || 'Unknown error.') + '\n\nIf this is a quota or rate-limit issue, check your Puter usage/billing page. This app will never switch to a paid model automatically. You can choose another FREE model from the model selector.', 'assistant', true);
                 
                 // FIX: The API call failed, so the optimistic user message added to the history
                 // resulted in an invalid state. Remove it to allow the user to try again.
