@@ -1740,6 +1740,45 @@ RESPONSE STYLE:
             return `You are an independent critical reviewer. Check the draft's logic, factual consistency, assumptions, omissions, and alternative explanations. Identify only material issues and improvements. Do not reveal hidden chain-of-thought; provide a concise audit report.`;
         }
 
+        // Central Puter chat adapter. Earlier builds called this function without defining it,
+        // which caused the request to stop before the AI or web-search tool was reached.
+        async function collectModelText(messages, model, options = {}, onProgress = null) {
+            if (!window.puter?.ai?.chat) throw new Error('Puter AI chat API is unavailable. Reload the page and check your connection.');
+            if (!model?.apiName) throw new Error('کوئی مفت ماڈل منتخب نہیں ہے۔');
+            const chatOptions = {
+                model: model.apiName,
+                stream: false,
+                normalize: true,
+                ...options
+            };
+            let result;
+            try {
+                result = await puter.ai.chat(messages, chatOptions);
+            } catch (error) {
+                const detail = error?.message || error?.msg || String(error || 'Unknown Puter AI error');
+                if (options?.tools?.some(tool => tool?.type === 'web_search')) {
+                    throw new Error('ویب سرچ کی درخواست Puter/OpenAI سے مکمل نہیں ہو سکی: ' + detail + '۔ ممکن ہے منتخب مفت ماڈل Web Search کو سپورٹ نہ کرتا ہو یا اس کی مفت حد ختم ہو گئی ہو۔');
+                }
+                throw new Error('Puter AI درخواست ناکام ہوئی: ' + detail);
+            }
+            const message = result?.message || result?.response?.message || result;
+            let content = message?.content ?? result?.text ?? result?.content ?? '';
+            if (Array.isArray(content)) {
+                content = content.map(part => {
+                    if (typeof part === 'string') return part;
+                    return part?.text || part?.content || '';
+                }).filter(Boolean).join('\n');
+            }
+            if (typeof content !== 'string') content = String(content ?? '');
+            content = content.trim();
+            if (!content) {
+                const reason = message?.refusal || result?.error?.message || result?.stop_reason || 'ماڈل نے کوئی متنی جواب واپس نہیں کیا۔';
+                throw new Error('AI کا جواب خالی ہے: ' + reason);
+            }
+            if (typeof onProgress === 'function') onProgress(content);
+            return content;
+        }
+
         async function sendMessage(message, useResearch = false) {
             if (isStreaming) return;
             const activeMode = assistantMode;
